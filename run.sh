@@ -53,6 +53,3 @@ else
     time ./${TARGET}_fplicm > /dev/null
     echo -e "\n\n"
 fi
-
-# Cleanup
-git clean -fXd > /dev/null
