@@ -1,6 +1,6 @@
 set -Eeuxo pipefail
 
-PATH2LIB=~/hw2/build/HW2/LLVMHW2.so        # Specify your build directory in the project
+PASSLIB=~/hw2/build/HW2/LLVMHW2.so        # Specify your build directory in the project
 PASS=${1}                # Choose either -fplicm-correctness or -fplicm-performance
 TARGET=${2%.*}
 
@@ -28,7 +28,7 @@ clang -fprofile-instr-generate ${TARGET}.ls.prof.bc -o ${TARGET}_prof
 llvm-profdata merge -o ${TARGET}.profdata default.profraw
 
 # Apply FPLICM
-opt -enable-new-pm=0 -o ${TARGET}.fplicm.bc -pgo-instr-use -pgo-test-profile-file=${TARGET}.profdata -load ${PATH2LIB} ${PASS} < ${TARGET}.ls.bc > /dev/null
+opt -enable-new-pm=0 -o ${TARGET}.fplicm.bc -pgo-instr-use -pgo-test-profile-file=${TARGET}.profdata -load ${PASSLIB} ${PASS} < ${TARGET}.ls.bc > /dev/null
 
 # Generate binary excutable before FPLICM: Unoptimzied code
 clang ${TARGET}.ls.bc -o ${TARGET}_no_fplicm
