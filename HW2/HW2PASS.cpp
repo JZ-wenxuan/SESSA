@@ -25,10 +25,12 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Scalar/LoopPassManager.h"
+#include "llvm/Transforms/Scalar/LICM.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
+#include "llvm/Analysis/MemorySSAUpdater.h"
 
 /* *******Implementation Starts Here******* */
 // include necessary header files
@@ -38,6 +40,113 @@ using namespace llvm;
 
 #define DEBUG_TYPE "fplicm"
 
+struct FPLICM {
+  Loop* L;
+  LoopInfo* LI;
+  BranchProbabilityInfo* BPI;
+  MemorySSAUpdater* MSSAU;
+  SmallPtrSet<BasicBlock *, 8> FrequentPath;
+
+  FPLICM(Loop *L, LoopInfo *LI, BranchProbabilityInfo *BPI, MemorySSAUpdater* MSSAU)
+    : L(L), LI(LI), BPI(BPI), MSSAU(MSSAU) {
+  }
+
+  bool run() {
+    LoopBlocksRPO Worklist(L);
+    Worklist.perform(LI);
+    // determine most likely path
+    auto BB = L->getHeader();
+    while (true) {
+      errs() << BB->getName();
+      FrequentPath.insert(BB);
+      auto NextBB = getMostLikelySuccessor(BB);
+      if (!NextBB) {
+        errs() << " has no most likely path.\n";
+        return false;
+      }
+      errs() << " -> " << NextBB->getName() << "\n";
+      if (NextBB == L->getHeader()) {
+        break;
+      }
+      BB = NextBB;
+    }
+
+    // traverse FreqentPath (not in order) to find invariant pointers
+    // their loads should be hoisted, and their stores should be fixed-up
+    // std::vector<Value *> InvariantPtrs;
+    for (BasicBlock *BB: FrequentPath) {
+      errs() << BB->getName() << ":\n";
+      for (Instruction &I : make_early_inc_range(*BB)) {
+        if (hasAlmostInvariantOperands(&I)) {
+          if (I.getOpcode() == Instruction::Load &&
+              isPtrAlmostInvariant(I.getOperand(0))) {
+            // InvariantPtrs.push_back(I.getOperand(0));
+            moveInstructionBefore(I, *L->getLoopPreheader()->getTerminator());
+            I.updateLocationAfterHoist();
+          }
+        }
+        I.print(errs());
+        errs() << "\n";
+      }
+    }
+    // Hoist and fixed-up
+    // for (Value *V: InvariantPtrs) {
+    //   for (Value *user: V->users()) {
+    //     Instruction *I = dyn_cast<Instruction>(user);
+    //     if (I->getOpcode() == Instruction::Load) {
+
+    //     } else if (I->getOpcode() == Instruction::Store) {
+
+    //     } else {
+    //       errs() >> I->
+    //     }
+    //   }
+    // }
+    // return !InvariantPtrs.empty();
+    return true;
+  }
+
+  void moveInstructionBefore(Instruction &I, Instruction &Dest) {
+    I.moveBefore(&Dest);
+    if (MemoryUseOrDef *OldMemAcc = cast_or_null<MemoryUseOrDef>(
+            MSSAU->getMemorySSA()->getMemoryAccess(&I)))
+      MSSAU->moveToPlace(OldMemAcc, Dest.getParent(), MemorySSA::BeforeTerminator);
+  }
+
+  bool isPtrAlmostInvariant(const Value *V) {
+    // return if no user of V is a STORE in the frequent path
+    return none_of(V->users(), [this](const Value *V) {
+      if (const Instruction *I = dyn_cast<Instruction>(V))
+        return I->getOpcode() == Instruction::Store &&
+               FrequentPath.count(I->getParent()) != 0;
+      return false; // non-instruction is not store
+    });
+  }
+
+  bool isAlmostInvariant(const Value *V) {
+    if (const Instruction *I = dyn_cast<Instruction>(V))
+      return FrequentPath.count(I->getParent()) == 0;
+    return true; // All non-instructions are loop invariant
+  }
+
+  bool hasAlmostInvariantOperands(const Instruction *I) {
+    return all_of(I->operands(), [this](const Value *V) {
+      return isAlmostInvariant(V);
+    });
+  }
+
+  BasicBlock *getMostLikelySuccessor(const BasicBlock *BB) {
+    auto I = BB->getTerminator();
+    for (unsigned i = 0; i < I->getNumSuccessors(); i++) {
+      const auto &Prob = BPI->getEdgeProbability(BB, i);
+      if ((double) Prob.getNumerator() >= 1717986918) {
+        errs() << " " << Prob.getNumerator() / ( Prob.getDenominator() / 100) << "%";
+        return I->getSuccessor(i);
+      }
+    }
+    return nullptr;
+  }
+};
 
 namespace Correctness{
 struct FPLICMPass : public LoopPass {
@@ -48,8 +157,15 @@ struct FPLICMPass : public LoopPass {
     bool Changed = false;
 
     /* *******Implementation Starts Here******* */
-    
-    
+    MemorySSA *MSSA = &getAnalysis<MemorySSAWrapperPass>().getMSSA();
+    MemorySSAUpdater MSSAU(MSSA);
+    FPLICM Helper(
+      L,
+      &getAnalysis<LoopInfoWrapperPass>().getLoopInfo(),
+      &getAnalysis<BranchProbabilityInfoWrapperPass>().getBPI(),
+      &MSSAU
+    );
+    Changed = Helper.run();
     /* *******Implementation Ends Here******* */
     
     return Changed;
@@ -60,6 +176,8 @@ struct FPLICMPass : public LoopPass {
     AU.addRequired<BranchProbabilityInfoWrapperPass>();
     AU.addRequired<BlockFrequencyInfoWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
+    AU.addRequired<MemorySSAWrapperPass>();
+    AU.addPreserved<MemorySSAWrapperPass>();
   }
 
 private:

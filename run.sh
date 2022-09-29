@@ -1,11 +1,11 @@
 set -Eeuxo pipefail
 
 PASSLIB=~/hw2/build/HW2/LLVMHW2.so        # Specify your build directory in the project
-PASS=${1}                # Choose either -fplicm-correctness or -fplicm-performance
-TARGET=${2%.*}
+TARGET=${1%.*}
+PASS=${@:2}                # Choose either -fplicm-correctness or -fplicm-performance
 
 # Delete outputs from previous run.
-git clean -fXd
+git clean -fXd > /dev/null
 
 # rebuild HW2PASS
 mkdir build
@@ -15,7 +15,7 @@ make -j2
 cd ..
 
 # Convert source code to bitcode (IR)
-clang -emit-llvm -c ${TARGET}.c -o ${TARGET}.bc
+clang -emit-llvm -c -Xclang -disable-O0-optnone ${TARGET}.c -o ${TARGET}.bc
 # Canonicalize natural loops
 opt -enable-new-pm=0 -loop-simplify ${TARGET}.bc -o ${TARGET}.ls.bc
 # Instrument profiler
@@ -28,11 +28,15 @@ clang -fprofile-instr-generate ${TARGET}.ls.prof.bc -o ${TARGET}_prof
 llvm-profdata merge -o ${TARGET}.profdata default.profraw
 
 # Apply FPLICM
-opt -enable-new-pm=0 -o ${TARGET}.fplicm.bc -pgo-instr-use -pgo-test-profile-file=${TARGET}.profdata -load ${PASSLIB} ${PASS} < ${TARGET}.ls.bc > /dev/null
+opt -enable-new-pm=0 -o ${TARGET}.fplicm.bc -pgo-instr-use -pgo-test-profile-file=${TARGET}.profdata -load ${PASSLIB} ${PASS} < ${TARGET}.ls.bc &> opt_output
 
 # Generate binary excutable before FPLICM: Unoptimzied code
+llvm-dis ${TARGET}.ls.bc
+clang -S ${TARGET}.ls.bc -o ${TARGET}_no_fplicm.s
 clang ${TARGET}.ls.bc -o ${TARGET}_no_fplicm
 # Generate binary executable after FPLICM: Optimized code
+llvm-dis ${TARGET}.fplicm.bc
+clang -S ${TARGET}.fplicm.bc -o ${TARGET}_fplicm.s
 clang ${TARGET}.fplicm.bc -o ${TARGET}_fplicm
 
 # Produce output from binary to check correctness

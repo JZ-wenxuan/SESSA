@@ -7,5 +7,7 @@ build
 *.profdata
 *_output
 *.ll
+*.o
+*.s
 
 .vscode
