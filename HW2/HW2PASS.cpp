@@ -28,9 +28,9 @@
 #include "llvm/Transforms/Scalar/LICM.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
+#include "llvm/Transforms/Utils/SSAUpdater.h"
 #include "llvm/Analysis/BranchProbabilityInfo.h"
 #include "llvm/Analysis/BlockFrequencyInfo.h"
-#include "llvm/Analysis/MemorySSAUpdater.h"
 
 /* *******Implementation Starts Here******* */
 // include necessary header files
@@ -44,11 +44,10 @@ struct FPLICM {
   Loop* L;
   LoopInfo* LI;
   BranchProbabilityInfo* BPI;
-  MemorySSAUpdater* MSSAU;
   SmallPtrSet<BasicBlock *, 8> FrequentPath;
 
-  FPLICM(Loop *L, LoopInfo *LI, BranchProbabilityInfo *BPI, MemorySSAUpdater* MSSAU)
-    : L(L), LI(LI), BPI(BPI), MSSAU(MSSAU) {
+  FPLICM(Loop *L, LoopInfo *LI, BranchProbabilityInfo *BPI)
+    : L(L), LI(LI), BPI(BPI) {
   }
 
   bool run() {
@@ -73,7 +72,7 @@ struct FPLICM {
 
     // traverse FreqentPath (not in order) to find invariant pointers
     // their loads should be hoisted, and their stores should be fixed-up
-    // std::vector<Value *> InvariantPtrs;
+    // std::vector<Value *> InvariantPtrs;    
     for (BasicBlock *BB: FrequentPath) {
       errs() << BB->getName() << ":\n";
       for (Instruction &I : make_early_inc_range(*BB)) {
@@ -81,8 +80,25 @@ struct FPLICM {
           if (I.getOpcode() == Instruction::Load &&
               isPtrAlmostInvariant(I.getOperand(0))) {
             // InvariantPtrs.push_back(I.getOperand(0));
-            moveInstructionBefore(I, *L->getLoopPreheader()->getTerminator());
+            I.moveBefore(L->getLoopPreheader()->getTerminator());
             I.updateLocationAfterHoist();
+            SmallVector<PHINode *, 16> NewPHIs;
+            SSAUpdater SSA(&NewPHIs);
+            SSA.Initialize(I.getType(), "phi");
+            SSA.AddAvailableValue(I.getParent(), &I);
+            for (Value *user: I.getOperand(0)->users()) {
+              Instruction *I = dyn_cast<Instruction>(user);
+              if (I->getOpcode() == Instruction::Store) {
+                SSA.AddAvailableValue(I->getParent(), I->getOperand(0));
+              }
+            }
+            std::vector<Use *> uses;
+            for (Use &use: I.uses()) {
+              uses.push_back(&use);
+            }
+            for (auto i : uses) {
+              SSA.RewriteUseAfterInsertions(*i);
+            }
           }
         }
         I.print(errs());
@@ -104,13 +120,6 @@ struct FPLICM {
     // }
     // return !InvariantPtrs.empty();
     return true;
-  }
-
-  void moveInstructionBefore(Instruction &I, Instruction &Dest) {
-    I.moveBefore(&Dest);
-    if (MemoryUseOrDef *OldMemAcc = cast_or_null<MemoryUseOrDef>(
-            MSSAU->getMemorySSA()->getMemoryAccess(&I)))
-      MSSAU->moveToPlace(OldMemAcc, Dest.getParent(), MemorySSA::BeforeTerminator);
   }
 
   bool isPtrAlmostInvariant(const Value *V) {
@@ -157,13 +166,10 @@ struct FPLICMPass : public LoopPass {
     bool Changed = false;
 
     /* *******Implementation Starts Here******* */
-    MemorySSA *MSSA = &getAnalysis<MemorySSAWrapperPass>().getMSSA();
-    MemorySSAUpdater MSSAU(MSSA);
     FPLICM Helper(
       L,
       &getAnalysis<LoopInfoWrapperPass>().getLoopInfo(),
-      &getAnalysis<BranchProbabilityInfoWrapperPass>().getBPI(),
-      &MSSAU
+      &getAnalysis<BranchProbabilityInfoWrapperPass>().getBPI()
     );
     Changed = Helper.run();
     /* *******Implementation Ends Here******* */
@@ -176,8 +182,6 @@ struct FPLICMPass : public LoopPass {
     AU.addRequired<BranchProbabilityInfoWrapperPass>();
     AU.addRequired<BlockFrequencyInfoWrapperPass>();
     AU.addRequired<LoopInfoWrapperPass>();
-    AU.addRequired<MemorySSAWrapperPass>();
-    AU.addPreserved<MemorySSAWrapperPass>();
   }
 
 private:
