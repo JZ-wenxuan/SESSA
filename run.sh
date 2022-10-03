@@ -31,12 +31,12 @@ llvm-profdata merge -o ${TARGET}.profdata default.profraw
 opt -enable-new-pm=0 -o ${TARGET}.fplicm.bc -pgo-instr-use -pgo-test-profile-file=${TARGET}.profdata -load ${PASSLIB} ${PASS} < ${TARGET}.ls.bc &> opt_output
 
 # Generate binary excutable before FPLICM: Unoptimzied code
-llvm-dis ${TARGET}.ls.bc
-clang -S ${TARGET}.ls.bc -o ${TARGET}_no_fplicm.s
+llvm-dis ${TARGET}.ls.bc -o=no_fplicm.ll
+clang -S ${TARGET}.ls.bc -o no_fplicm.s
 clang ${TARGET}.ls.bc -o ${TARGET}_no_fplicm
 # Generate binary executable after FPLICM: Optimized code
-llvm-dis ${TARGET}.fplicm.bc
-clang -S ${TARGET}.fplicm.bc -o ${TARGET}_fplicm.s
+llvm-dis ${TARGET}.fplicm.bc -o=fplicm.ll
+clang -S ${TARGET}.fplicm.bc -o fplicm.s
 clang ${TARGET}.fplicm.bc -o ${TARGET}_fplicm
 
 # Produce output from binary to check correctness
