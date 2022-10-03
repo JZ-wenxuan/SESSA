@@ -47,6 +47,7 @@ set +x
 echo -e "\n=== Correctness Check ==="
 if [ "$(diff correct_output fplicm_output)" != "" ]; then
     echo -e ">> FAIL\n"
+    exit 1
 else
     echo -e ">> PASS\n"
     # Measure performance

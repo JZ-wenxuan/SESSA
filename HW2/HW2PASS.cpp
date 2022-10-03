@@ -45,9 +45,10 @@ struct FPLICM {
   LoopInfo* LI;
   BranchProbabilityInfo* BPI;
   SmallPtrSet<BasicBlock *, 8> FrequentPath;
+  bool isPerformance;
 
-  FPLICM(Loop *L, LoopInfo *LI, BranchProbabilityInfo *BPI)
-    : L(L), LI(LI), BPI(BPI) {
+  FPLICM(Loop *L, LoopInfo *LI, BranchProbabilityInfo *BPI, bool isPerformance=false)
+    : L(L), LI(LI), BPI(BPI), isPerformance(isPerformance) {
   }
 
   bool run() {
@@ -86,13 +87,13 @@ struct FPLICM {
             I.updateLocationAfterHoist();
             LoadHoisted.push_back(&I);
             AllHoisted.push_back(&I);
-          } else if (I.getOpcode() == Instruction::Store && isMSSA(cast<StoreInst>(&I))) {
-            // errs() << "HOISTING >>>";
-            // // hoist MSSA stores
-            // I.moveBefore(L->getLoopPreheader()->getTerminator());
-            // I.updateLocationAfterHoist();
-            // AllHoisted.push_back(&I);
-          } else if (canHoist(I)) {
+          } else if (isPerformance && I.getOpcode() == Instruction::Store && isMSSA(cast<StoreInst>(&I))) {
+            errs() << "HOISTING >>>";
+            // hoist MSSA stores
+            I.moveBefore(L->getLoopPreheader()->getTerminator());
+            I.updateLocationAfterHoist();
+            AllHoisted.push_back(&I);
+          } else if (isPerformance && canHoist(I)) {
             // hoist any non-memory operations
             errs() << "HOISTING >>>";
             I.moveBefore(L->getLoopPreheader()->getTerminator());
@@ -106,7 +107,7 @@ struct FPLICM {
       }
     }
 
-    std::vector<Instruction *> Fixups;
+    std::vector<StoreInst *> SIs;
     for (auto LI : LoadHoisted) {
       SmallVector<PHINode *, 16> NewPHIs;
       SSAUpdater SSA(&NewPHIs);
@@ -115,23 +116,16 @@ struct FPLICM {
       SSA.AddAvailableValue(LI->getParent(), LI);
       // for all stores breaking the hoisted load
       for (Value *user: LI->getOperand(0)->users()) {
-        Instruction *I = dyn_cast<Instruction>(user);
-        if (I->getOpcode() == Instruction::Store && L->contains(I)) {
-          // collect stored value
-          SSA.AddAvailableValue(I->getParent(), I->getOperand(0));
-          // insert subsequent fixup
-          ValueToValueMapTy vmap;
-          auto *InsertPos = I->getNextNode();
-          for (auto HI : AllHoisted) {
-            auto *FI = HI->clone(); // fixup instruction
-            FI->insertBefore(InsertPos);
-            vmap[HI] = FI;
-            RemapInstruction(FI, vmap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+        if (StoreInst *SI = dyn_cast<StoreInst>(user)) {
+          if (L->contains(SI)) {
+            // collect stored value
+            SSA.AddAvailableValue(SI->getParent(), SI->getValueOperand());
+            // prepare for fixup
+            SIs.push_back(cast<StoreInst>(SI));
           }
-          Fixups.push_back(I->getNextNode());
         }
       }
-      // resolve phi for all uses of LI
+      // resolve phi for all direct uses of LI
       std::vector<Use *> uses;
       for (Use &use: LI->uses()) {
         uses.push_back(&use);
@@ -141,6 +135,24 @@ struct FPLICM {
       }
     }
 
+    // insert subsequent fixup
+    std::vector<Instruction *> Fixups;
+    for (auto SI : SIs) {
+      ValueToValueMapTy vmap;
+      auto *InsertPos = SI->getNextNode();
+      for (auto HI : AllHoisted) {
+        auto *FI = HI->clone(); // fixup instruction
+        FI->insertBefore(InsertPos);
+        vmap[HI] = FI;
+        RemapInstruction(FI, vmap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+        errs() << "Fixup >>>";
+        FI->print(errs());
+        errs() << "\n";
+      }
+      Fixups.push_back(SI->getNextNode());
+    }
+
+    // resolve fixup ssa
     for (auto HI : AllHoisted) {
       errs() << "SSA >>>";
       HI->print(errs());
@@ -155,6 +167,9 @@ struct FPLICM {
       SSA.Initialize(HI->getType(), "phi");
       SSA.AddAvailableValue(HI->getParent(), HI);
       for (auto & FI : Fixups) {
+        errs() << "    >>>";
+        FI->print(errs());
+        errs() << "\n";
         SSA.AddAvailableValue(FI->getParent(), FI);
         FI = FI->getNextNode();
       }
@@ -168,61 +183,6 @@ struct FPLICM {
       }
     }
 
-    // // get the depents of every hoisted LI
-    // for (auto & [Dependent, LIs] : invariantDependencies) {
-    //   for (auto & LI : LIs) {
-    //     invariantDependents[LI].push_back(Dependent);
-    //   }
-    // }
-    // for (auto & [I, Dependents] : invariantDependents) {
-    //   SmallVector<PHINode *, 16> NewPHIs;
-    //   SSAUpdater SSA(&NewPHIs);
-    //   SSA.Initialize(I->getType(), "phi");
-    //   // collect the initially loaded value
-    //   SSA.AddAvailableValue(I->getParent(), I);
-    //   // find all stores and collect the stored values
-    //   for (Value *user: I->getOperand(0)->users()) {
-    //     Instruction *I = dyn_cast<Instruction>(user);
-    //     if (I->getOpcode() == Instruction::Store) {
-    //       SSA.AddAvailableValue(I->getParent(), I->getOperand(0));
-    //     }
-    //   }
-    //   fixupUses(I, SSA);
-    //   for (auto & D : Dependents) {
-    //     errs() << "Fixing >>>";
-    //     D->print(errs());
-    //     errs() << "\n";
-    //     SmallVector<PHINode *, 16> NewPHIs;
-    //     SSAUpdater SSA(&NewPHIs);
-    //     SSA.Initialize(D->getType(), "phi");
-    //     // collect the initially loaded value
-    //     SSA.AddAvailableValue(D->getParent(), D);
-    //     // clone dependent calculation for fixup
-    //     for (Value *user: I->getOperand(0)->users()) {
-    //       // Instruction *I = dyn_cast<Instruction>(user);
-    //       // if (I->getOpcode() == Instruction::Store) {
-    //       //   SSA.AddAvailableValue(I->getParent(), I->getOperand(0));
-    //       // }
-    //       Instruction *Fixup = D->clone();
-    //       Fixup->insertAfter(dyn_cast<Instruction>(user));
-    //       SSA.AddAvailableValue(Fixup->getParent(), Fixup);
-    //     }
-    //     fixupUses(D, SSA);
-    //   }
-    // }
-
-    errs() << "\n\nNow:\n";
-    for (Instruction &I : *(L->getLoopPreheader())) {
-      I.print(errs());
-      errs() << "\n";
-    }
-    for (BasicBlock *BB: Worklist) {
-      errs() << BB->getName() << ":\n";
-      for (Instruction &I : *BB) {
-        I.print(errs());
-        errs() << "\n";
-      }
-    }
     return true;
   }
 
@@ -235,15 +195,6 @@ struct FPLICM {
       SSA.RewriteUseAfterInsertions(*i);
     }
   }
-
-  // void addDependentInvariant(Instruction *I) {
-  //   invariantDependencies.insert({I, {}});
-  //   auto &Dependencies = invariantDependencies[I];
-  //   for (int i = 0; i < I->getNumOperands(); i++) {
-  //     auto &D = invariantDependencies[dyn_cast<Instruction>(I->getOperand(i))];
-  //     Dependencies.insert(Dependencies.end(), D.begin(), D.end());
-  //   }
-  // }
 
   bool isPtrAlmostInvariant(const Value *Ptr) {
     // return if no user of V is a store in the frequent path
@@ -372,8 +323,13 @@ struct FPLICMPass : public LoopPass {
     bool Changed = false;
 
     /* *******Implementation Starts Here******* */
-    
-
+    FPLICM Helper(
+      L,
+      &getAnalysis<LoopInfoWrapperPass>().getLoopInfo(),
+      &getAnalysis<BranchProbabilityInfoWrapperPass>().getBPI(),
+      true
+    );
+    Changed = Helper.run();
     /* *******Implementation Ends Here******* */
     
     return Changed;

@@ -1,0 +1,13 @@
+This implementation does the following:
+
+- We define *invariant* `Value` as being a constant, or defined by an hoisted instruction
+
+- Hoist a instruction if all of its operands are *invariant* and:
+  -  It is an arithmetric operation (in Performance mode only)
+  - Or, it is a `Load` with src pointer not assigned to somewhere else in the frequent path
+  - Or, it is a `Store` with dest pointer assigned only once in the whole function (in Performance mode only)
+
+- Find all `Store`s that the every  hoisted `Load` depends on and:
+  - Fix all uses of the hoisted `Load` by taking phi of all stored values
+  - Clone **all hoisted instructions**, and insert them after every `Store` found (in Performance mode only)
+  - Fix all uses of the cloned instructions' values by taking phi of them (in Performance mode only)
