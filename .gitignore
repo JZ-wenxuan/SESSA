@@ -2,7 +2,9 @@ build
 
 *.profraw
 *_prof
-*_fplicm
+*_original
+*_cytron
+*_sessa
 *.bc
 *.profdata
 *_output
