@@ -1,6 +1,7 @@
 set -Eeuxo pipefail
 
-PASSLIB=~/proj/build/HW2/LLVMHW2.so        # Specify your build directory in the project
+PROJDIR=~/proj
+PASSLIB=${PROJDIR}/build/src/LLVMSESSA.so        # Specify your build directory in the project
 TARGET=${1%.*}
 PASS=${@:2}                # Choose either -sessa-correctness or -sessa-performance
 
