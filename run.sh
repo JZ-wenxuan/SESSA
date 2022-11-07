@@ -27,19 +27,18 @@ clang -emit-llvm -c -Xclang -disable-O0-optnone ${TARGET}.c -o ${TARGET}.bc
 # ./${TARGET}_prof > correct_output
 # llvm-profdata merge -o ${TARGET}.profdata default.profraw
 
-# Apply sessa
-opt -enable-new-pm=0 -o ${TARGET}.sessa.bc -load ${PASSLIB} ${PASS} < ${TARGET}.bc &> opt_output
-opt -enable-new-pm=0 -o ${TARGET}.cytron.bc -mem2reg < ${TARGET}.bc &> /dev/null
 
 # Generate binary excutable before ssa construction: Unoptimzied code
 llvm-dis ${TARGET}.bc -o=original.ll
 clang -S ${TARGET}.bc -o original.s
 clang ${TARGET}.bc -o ${TARGET}_original
 # Generate binary excutable after cytron
+opt -enable-new-pm=0 -o ${TARGET}.cytron.bc -mem2reg < ${TARGET}.bc &> /dev/null
 llvm-dis ${TARGET}.cytron.bc -o=cytron.ll
 clang -S ${TARGET}.cytron.bc -o cytron.s
 clang ${TARGET}.cytron.bc -o ${TARGET}_cytron
 # Generate binary executable after sessa
+opt -enable-new-pm=0 -o ${TARGET}.sessa.bc -load ${PASSLIB} ${PASS} < ${TARGET}.bc &> opt_output
 llvm-dis ${TARGET}.sessa.bc -o=sessa.ll
 clang -S ${TARGET}.sessa.bc -o sessa.s
 clang ${TARGET}.sessa.bc -o ${TARGET}_sessa
