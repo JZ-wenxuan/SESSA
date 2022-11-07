@@ -9,3 +9,7 @@ With llvm installed, specify `$PROJDIR` in `run.sh`, then execute
 ```
 ./run.sh tests/simple.c -sessa
 ```
+
+## TODO
+
+Implement `removeRedundantPhis` and `tryRemoveTrivialPhi`.
