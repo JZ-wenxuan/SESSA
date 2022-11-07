@@ -12,4 +12,4 @@ With llvm installed, specify `$PROJDIR` in `run.sh`, then execute
 
 ## TODO
 
-Implement `removeRedundantPhis` and `tryRemoveTrivialPhi`.
+Implement `removeRedundantPhis`.

@@ -17,7 +17,7 @@ int main() {
 
 	j = 5;
 	k = 15;
-	for(i = 0; i < 1000000000; i++) {	
+	for(i = 0; i < 1000000; i++) {	
 		long long int temp = A[j] * 3 * 29 / 4 + 23;
 		long long int temp2 = B[k] * 7 * 33 / 3 + 59;
 		long long int temp3 = C[(temp + temp2) % 1000] + A[j] + B[k];

@@ -143,7 +143,7 @@ struct SESSA : public FunctionPass {
     for (llvm::BasicBlock* pred : predecessors(phi->getParent())) {
       phi->addIncoming(readVariable(variable, pred), pred);
     }
-    return phi;
+    return tryRemoveTrivialPhi(phi);
   }
 
   Value* newPhi(Type* type, BasicBlock* block) {
@@ -158,6 +158,36 @@ struct SESSA : public FunctionPass {
     }
     sealedBlocks.insert(block);
   }
+
+  Value* tryRemoveTrivialPhi(PHINode* phi) {
+    Value* same = nullptr;
+    for (Use & U : phi->operands()) {
+      Value* op = &(*U);
+      if (op == same || op == phi) {
+        continue; // Unique value or self−reference
+      }
+      if (same != nullptr) {
+        return phi; // The phi merges at least two values: not trivial
+      }
+      same = op;
+    }
+    if (same == nullptr) {
+      same = UndefValue::get(phi->getType()); // The phi is unreachable or in the start block
+    }
+    std::vector<Value*> users;
+    for (Value * user : phi->users()) {
+      if (user != phi) users.push_back(user); // Remember all users except the phi itself
+    }
+    phi->replaceAllUsesWith(same);
+    // Try to recursively remove all phi users, which might have become trivial
+    for (Value* user : users) {
+      if (PHINode* phiUser = dyn_cast<PHINode>(user)) {
+        tryRemoveTrivialPhi(phiUser);
+      }
+    }
+    return same;
+  }
+
 
   std::unordered_set<Value*> allocas;
   std::unordered_map<BasicBlock*, std::unordered_map<Value*, Value*>> incompletePhis;
