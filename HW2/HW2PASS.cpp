@@ -83,6 +83,15 @@ struct SESSA : public FunctionPass {
           }
         }
       }
+      for (BasicBlock* S : successors(&BB)) {
+        if (predCount.find(S) == predCount.end()) {
+          predCount[S] = pred_size(S);
+        }
+        predCount[S]--;
+        if (predCount[S] == 0) {
+          sealBlock(S);
+        }
+      }
     }
     for (Value* V : allocas) {
       cast<Instruction>(V)->eraseFromParent();
@@ -112,13 +121,11 @@ struct SESSA : public FunctionPass {
 
   Value* readVariableRecursive(Value* variable, BasicBlock* block) {
     Value* val;
-    // if (sealedBlocks.find(block) == sealedBlocks.end()) {
-    //   // Incomplete CFG
-    //   val = newPhi(cast<AllocaInst>(variable)->getAllocatedType(), block);
-    //   incompletePhis[block][variable] = val;
-    //   return val;
-    // } 
-    if (pred_size(block) == 1) {
+    if (sealedBlocks.find(block) == sealedBlocks.end()) {
+      // Incomplete CFG
+      val = newPhi(cast<AllocaInst>(variable)->getAllocatedType(), block);
+      incompletePhis[block][variable] = val;
+    } else if (pred_size(block) == 1) {
       // Optimize the common case of one predecessor: No phi needed
       val = readVariable(variable, *pred_begin(block));
     } else {
@@ -144,10 +151,19 @@ struct SESSA : public FunctionPass {
     return PHINode::Create(type, 0, name, &block->front());
   }
 
+  void sealBlock(BasicBlock* block) {
+    for (auto & p : incompletePhis[block]) {
+      auto [variable, phi] = p;
+      addPhiOperands(variable, cast<PHINode>(phi));
+    }
+    sealedBlocks.insert(block);
+  }
+
   std::unordered_set<Value*> allocas;
-  // std::unordered_map<BasicBlock*, std::unordered_map<Value*, Value*>> incompletePhis;
+  std::unordered_map<BasicBlock*, std::unordered_map<Value*, Value*>> incompletePhis;
   std::unordered_map<Value*, std::unordered_map<BasicBlock*, Value*>> currentDef;
-  // std::unordered_set<BasicBlock*> sealedBlocks;
+  std::unordered_set<BasicBlock*> sealedBlocks;
+  std::unordered_map<BasicBlock*, unsigned> predCount;
   unsigned numPHINodes = 0;
 
 }; // end of struct SESSA
